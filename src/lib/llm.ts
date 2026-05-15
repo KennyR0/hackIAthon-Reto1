@@ -7,7 +7,7 @@ export type JsonSchema = {
   additionalProperties: false;
 };
 
-type LLMProvider = "openai" | "cerebras";
+type LLMProvider = "openai" | "cerebras" | "groq";
 
 type OpenAIOutputContent = {
   text?: string;
@@ -39,9 +39,12 @@ type CerebrasCompletionPayload = {
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const CEREBRAS_CHAT_COMPLETIONS_URL =
   "https://api.cerebras.ai/v1/chat/completions";
+const GROQ_CHAT_COMPLETIONS_URL =
+  "https://api.groq.com/openai/v1/chat/completions";
 
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
 const DEFAULT_CEREBRAS_MODEL = "llama-3.3-70b";
+const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -66,11 +69,11 @@ function parseJson<T>(raw: string, schema: z.ZodType<T>): T {
 
 function getProvider(): LLMProvider {
   const provider = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
-  if (provider === "openai" || provider === "cerebras") {
+  if (provider === "openai" || provider === "cerebras" || provider === "groq") {
     return provider;
   }
   throw new Error(
-    `Unsupported LLM_PROVIDER "${provider}". Use "openai" or "cerebras".`,
+    `Unsupported LLM_PROVIDER "${provider}". Use "openai", "cerebras", or "groq".`,
   );
 }
 
@@ -187,6 +190,53 @@ async function callCerebrasJson<T>(options: {
   return parseJson(text, options.zodSchema);
 }
 
+async function callGroqJson<T>(options: {
+  systemPrompt: string;
+  userMessage: string;
+  schemaName: string;
+  jsonSchema: JsonSchema;
+  zodSchema: z.ZodType<T>;
+}): Promise<T> {
+  const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnv("GROQ_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
+      messages: [
+        { role: "system", content: options.systemPrompt },
+        { role: "user", content: options.userMessage },
+      ],
+      stream: false,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: options.schemaName,
+          strict: true,
+          schema: options.jsonSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = (await response.json()) as CerebrasCompletionPayload;
+
+  if (!response.ok) {
+    throw new Error(
+      `Groq API error: ${payload.error?.message ?? response.statusText}`,
+    );
+  }
+
+  const text = payload.choices?.[0]?.message?.content?.trim();
+  if (!text) {
+    throw new Error("Groq response did not include output text");
+  }
+
+  return parseJson(text, options.zodSchema);
+}
+
 export async function callLLMJson<T>(options: {
   systemPrompt: string;
   userMessage: string;
@@ -198,6 +248,10 @@ export async function callLLMJson<T>(options: {
 
   if (provider === "cerebras") {
     return callCerebrasJson(options);
+  }
+
+  if (provider === "groq") {
+    return callGroqJson(options);
   }
 
   return callOpenAIJson(options);
