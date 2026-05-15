@@ -29,3 +29,37 @@ export interface AuthorizationResult {
   isUrgent: boolean;
   processingTimeMs: number;
 }
+
+export interface ClinicalExtraction {
+  primaryDiagnosis: string;
+  secondaryDiagnoses: string[];
+  requestedProcedure: string;
+  urgency: "Urgente" | "Programada";
+  urgencyJustification: string | null;
+  treatingPhysician: string | null;
+  clinicalNotes: string | null;
+}
+
+export interface MedicalCodes {
+  cie10Code: string;
+  cie10Description: string;
+  cptCode: string;
+  cupsCode: string;
+  procedureDescription: string;
+  specialtyCategory: string;
+  confidence: "alta" | "media" | "baja";
+}
+
+export interface PolicyValidation {
+  isPolicyActive: boolean;
+  waitingPeriodMet: boolean;
+  isCovered: boolean;
+  isExcluded: boolean;
+  withinCoverageLimit: boolean;
+  failureReasons: string[];
+  warnings: string[];
+}
+
+export interface AuthorizationRequest {
+  report: MedicalReport;
+}
