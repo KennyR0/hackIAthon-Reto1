@@ -4,6 +4,8 @@ import { runAuthorizationAgent } from "@/lib/agent";
 import { getPolicyById } from "@/lib/notion";
 import type { InsurancePolicy } from "@/types";
 
+export const maxDuration = 30;
+
 const reportSchema = z.object({
   patientId: z.string().min(1),
   patientName: z.string().min(1),
