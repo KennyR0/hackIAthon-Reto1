@@ -1,16 +1,12 @@
 import { createRequire } from "node:module";
 
-type PdfParseConstructor = new (options: {
-  data: Uint8Array;
-}) => {
-  destroy: () => Promise<void>;
-  getText: () => Promise<{ text: string }>;
-};
+type PdfParseFunction = (
+  dataBuffer: Buffer,
+  options?: Record<string, unknown>,
+) => Promise<{ text: string }>;
 
 const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse") as {
-  PDFParse: PdfParseConstructor;
-};
+const pdfParse = require("pdf-parse") as PdfParseFunction;
 
 const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024;
 const MIN_USEFUL_TEXT_CHARS = 120;
@@ -25,23 +21,17 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
     );
   }
 
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
+  const result = await pdfParse(buffer);
+  const cleanedText = cleanPdfText(result.text);
+  const usefulCharacters = cleanedText.replace(/\s/g, "").length;
 
-  try {
-    const result = await parser.getText();
-    const cleanedText = cleanPdfText(result.text);
-    const usefulCharacters = cleanedText.replace(/\s/g, "").length;
-
-    if (usefulCharacters < MIN_USEFUL_TEXT_CHARS) {
-      throw new Error(
-        "PDF escaneado detectado. Por favor sube una version digital del documento.",
-      );
-    }
-
-    return cleanedText;
-  } finally {
-    await parser.destroy();
+  if (usefulCharacters < MIN_USEFUL_TEXT_CHARS) {
+    throw new Error(
+      "PDF escaneado detectado. Por favor sube una version digital del documento.",
+    );
   }
+
+  return cleanedText;
 }
 
 function cleanPdfText(text: string): string {
