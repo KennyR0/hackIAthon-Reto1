@@ -3,15 +3,17 @@
 import {
   Activity,
   AlertCircle,
+  CheckCircle2,
   ClipboardCheck,
   FileText,
   LoaderCircle,
   ShieldCheck,
   Stethoscope,
+  XCircle,
   type LucideIcon,
 } from "lucide-react";
 import { useState } from "react";
-import AuthForm, { type AuthFormData } from "@/components/AuthForm";
+import AuthForm from "@/components/AuthForm";
 import ResultCard from "@/components/ResultCard";
 import type { AuthorizationResult, MedicalReport } from "@/types";
 
@@ -19,28 +21,35 @@ type ErrorPayload = {
   error?: string;
 };
 
+type AuthorizationResponse = AuthorizationResult & {
+  report?: MedicalReport;
+};
+
 export default function Home() {
   const [result, setResult] = useState<AuthorizationResult | null>(null);
   const [submittedReport, setSubmittedReport] = useState<MedicalReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showValidationModal, setShowValidationModal] = useState(false);
+  const [validationStatus, setValidationStatus] = useState<
+    "validada" | "no-validada" | null
+  >(null);
+  const [validationSaving, setValidationSaving] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  async function handleSubmit(formData: AuthFormData) {
-    const report: MedicalReport = {
-      ...formData,
-      reportDate: new Date().toISOString(),
-    };
-
+  async function handleSubmit(formData: FormData) {
     setLoading(true);
     setError(null);
     setResult(null);
-    setSubmittedReport(report);
+    setSubmittedReport(null);
+    setShowValidationModal(false);
+    setValidationStatus(null);
+    setValidationError(null);
 
     try {
       const response = await fetch("/api/authorize", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ report }),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -48,8 +57,20 @@ export default function Home() {
         throw new Error(payload.error ?? "No se pudo procesar la solicitud.");
       }
 
-      const data = (await response.json()) as AuthorizationResult;
+      const data = (await response.json()) as AuthorizationResponse;
       setResult(data);
+      setSubmittedReport(
+        data.report ?? {
+          patientId: data.patientId ?? "SIN-ID",
+          patientName: data.patientName ?? "",
+          reportDate: new Date().toISOString(),
+          diagnosis: "",
+          procedure: "",
+          urgency: data.isUrgent ? "Urgente" : "Programada",
+          policyId: "",
+        },
+      );
+      setShowValidationModal(true);
     } catch (caughtError) {
       const message =
         caughtError instanceof Error
@@ -74,9 +95,8 @@ export default function Home() {
               Agente de Pre-Autorizacion Quirurgica
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-[#5C7379]">
-              Analiza informes medicos y polizas en tiempo real para emitir una
-              decision administrativa clara, con comprobantes PDF listos para
-              entregar.
+              Sube el informe medico y la poliza en PDF para obtener una decision
+              administrativa en segundos.
             </p>
           </div>
 
@@ -109,11 +129,60 @@ export default function Home() {
           {error ? <ErrorState message={error} /> : null}
           {loading ? <LoadingState /> : null}
           {!loading && !error && result && submittedReport ? (
-            <ResultCard report={submittedReport} result={result} />
+            <div className="space-y-4">
+              <ResultCard report={submittedReport} result={result} />
+              <ValidationPanel
+                onOpen={() => setShowValidationModal(true)}
+                status={validationStatus}
+              />
+            </div>
           ) : null}
           {!loading && !error && !result ? <EmptyState /> : null}
         </div>
       </section>
+
+      {showValidationModal && result ? (
+        <ValidationModal
+          decision={result.decision}
+          error={validationError}
+          loading={validationSaving}
+          onClose={() => setShowValidationModal(false)}
+          onValidate={async (status) => {
+            setValidationSaving(true);
+            setValidationError(null);
+            try {
+              if (result.notionResultPageId) {
+                const response = await fetch("/api/authorize/validate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    resultPageId: result.notionResultPageId,
+                    status,
+                  }),
+                });
+
+                if (!response.ok) {
+                  const payload = (await response.json().catch(() => ({}))) as ErrorPayload;
+                  throw new Error(
+                    payload.error ?? "No se pudo guardar la validacion.",
+                  );
+                }
+              }
+
+              setValidationStatus(status);
+              setShowValidationModal(false);
+            } catch (caughtError) {
+              setValidationError(
+                caughtError instanceof Error
+                  ? caughtError.message
+                  : "No se pudo guardar la validacion.",
+              );
+            } finally {
+              setValidationSaving(false);
+            }
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -182,6 +251,108 @@ function ErrorState({ message }: { message: string }) {
         <div>
           <h3 className="font-semibold">No se pudo completar el analisis</h3>
           <p className="mt-1 text-sm leading-6">{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ValidationPanel({
+  onOpen,
+  status,
+}: {
+  onOpen: () => void;
+  status: "validada" | "no-validada" | null;
+}) {
+  const statusText =
+    status === "validada"
+      ? "Preautorizacion validada"
+      : status === "no-validada"
+        ? "Preautorizacion no validada"
+        : "Pendiente de validacion humana";
+
+  return (
+    <div className="rounded-lg border border-[#D6E5E2] bg-[#F6FAF9] p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-[#12323C]">{statusText}</p>
+          <p className="mt-1 text-sm leading-6 text-[#5C7379]">
+            Revisa la decision automatica antes de confirmar la preautorizacion.
+          </p>
+        </div>
+        <button
+          className="inline-flex h-10 items-center justify-center rounded-lg bg-[#0E766E] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#0B625C]"
+          onClick={onOpen}
+          type="button"
+        >
+          Validar preautorizacion
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ValidationModal({
+  decision,
+  error,
+  loading,
+  onClose,
+  onValidate,
+}: {
+  decision: AuthorizationResult["decision"];
+  error: string | null;
+  loading: boolean;
+  onClose: () => void;
+  onValidate: (status: "validada" | "no-validada") => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#12323C]/45 px-4">
+      <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-[#12323C]">
+              Validar preautorizacion
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-[#5C7379]">
+              Decision automatica: <strong>{decision}</strong>. Confirma si esta
+              preautorizacion debe continuar como valida.
+            </p>
+          </div>
+          <button
+            aria-label="Cerrar"
+            className="rounded-lg p-1 text-[#5C7379] hover:bg-[#F6FAF9]"
+            onClick={onClose}
+            type="button"
+          >
+            <XCircle aria-hidden="true" size={20} />
+          </button>
+        </div>
+
+        {error ? (
+          <div className="mt-4 rounded-lg border border-[#FECACA] bg-[#FEF2F2] p-3 text-sm text-[#B91C1C]">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <button
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[#0E766E] px-4 text-sm font-semibold text-white hover:bg-[#0B625C]"
+            disabled={loading}
+            onClick={() => onValidate("validada")}
+            type="button"
+          >
+            <CheckCircle2 aria-hidden="true" size={18} />
+            {loading ? "Guardando..." : "Validar"}
+          </button>
+          <button
+            className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-4 text-sm font-semibold text-[#B91C1C] hover:bg-[#FEE2E2]"
+            disabled={loading}
+            onClick={() => onValidate("no-validada")}
+            type="button"
+          >
+            <XCircle aria-hidden="true" size={18} />
+            No validar
+          </button>
         </div>
       </div>
     </div>

@@ -28,6 +28,16 @@ export interface AuthorizationResult {
   missingDocuments?: string[];
   isUrgent: boolean;
   processingTimeMs: number;
+  patientId?: string;
+  patientName?: string;
+  notionResultPageId?: string;
+  notionReportPageId?: string;
+  notionPolicyPageId?: string;
+}
+
+export interface ExtractionError {
+  field: "medicalReport" | "insurancePolicy";
+  message: string;
 }
 
 export interface ClinicalExtraction {

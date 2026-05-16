@@ -1,150 +1,187 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { runAuthorizationAgent } from "@/lib/agent";
-import { getPolicyById } from "@/lib/notion";
-import type { InsurancePolicy } from "@/types";
+import {
+  createInsurancePolicyRecord,
+  createMedicalReportRecord,
+  getInsurancePolicyRecord,
+  getMedicalReportRecord,
+} from "@/lib/notion";
+import { extractPdfText } from "@/lib/pdf-reader";
+import { parseInsurancePolicyPdf } from "@/lib/steps/parse-insurance-policy";
+import { parseMedicalReportPdf } from "@/lib/steps/parse-medical-report";
 
 export const maxDuration = 30;
+export const runtime = "nodejs";
 
-const reportSchema = z.object({
-  patientId: z.string().min(1),
-  patientName: z.string().min(1),
-  reportDate: z.string().min(1),
-  diagnosis: z.string().min(1),
-  procedure: z.string().min(1),
-  urgency: z.enum(["Urgente", "Programada"]),
-  policyId: z.string().min(1),
-});
+const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024;
 
-const authorizationRequestSchema = z.object({
-  report: reportSchema,
-});
-
-type NotionPropertyMap = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function isPdfFile(value: FormDataEntryValue | null): value is File {
+  return value instanceof File;
 }
 
-function getNestedRecord(
-  value: unknown,
-  key: string,
-): Record<string, unknown> | null {
-  if (!isRecord(value)) {
-    return null;
+function isScannedPdfError(error: unknown): error is Error {
+  return (
+    error instanceof Error &&
+    error.message.includes("PDF escaneado detectado")
+  );
+}
+
+async function readPdfTextForField(
+  buffer: Buffer,
+  label: "informe medico" | "poliza",
+): Promise<string | NextResponse<{ error: string }>> {
+  try {
+    return await extractPdfText(buffer);
+  } catch (error) {
+    console.error(`Error leyendo PDF de ${label}:`, error);
+
+    if (isScannedPdfError(error)) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
+    }
+
+    return NextResponse.json(
+      {
+        error: `No se pudo leer el PDF de ${label}. Verifica que no este protegido con contrasena y que sea un PDF digital valido.`,
+      },
+      { status: 422 },
+    );
   }
-
-  const nested = value[key];
-  return isRecord(nested) ? nested : null;
-}
-
-function getTitleOrRichText(props: NotionPropertyMap, propertyName: string) {
-  const property = props[propertyName];
-
-  if (!isRecord(property)) {
-    return "";
-  }
-
-  const textItems = Array.isArray(property.rich_text)
-    ? property.rich_text
-    : Array.isArray(property.title)
-      ? property.title
-      : [];
-
-  return textItems
-    .map((item) => {
-      const text = getNestedRecord(item, "text");
-      return typeof text?.content === "string" ? text.content : "";
-    })
-    .join("");
-}
-
-function getDate(props: NotionPropertyMap, propertyName: string) {
-  const date = getNestedRecord(props[propertyName], "date");
-  return typeof date?.start === "string" ? date.start : "";
-}
-
-function getNumber(props: NotionPropertyMap, propertyName: string) {
-  const property = props[propertyName];
-
-  if (!isRecord(property)) {
-    return 0;
-  }
-
-  return typeof property.number === "number" ? property.number : 0;
-}
-
-function getSelectName(props: NotionPropertyMap, propertyName: string) {
-  const select = getNestedRecord(props[propertyName], "select");
-  return typeof select?.name === "string" ? select.name : "";
-}
-
-function getMultiSelectNames(props: NotionPropertyMap, propertyName: string) {
-  const property = props[propertyName];
-
-  if (!isRecord(property) || !Array.isArray(property.multi_select)) {
-    return [];
-  }
-
-  return property.multi_select
-    .map((item) => (isRecord(item) && typeof item.name === "string" ? item.name : ""))
-    .filter(Boolean);
-}
-
-function mapPolicyFromNotion(
-  policyId: string,
-  properties: NotionPropertyMap,
-): InsurancePolicy {
-  const plan = getSelectName(properties, "Plan");
-
-  return {
-    policyId,
-    holderName: getTitleOrRichText(properties, "Titular"),
-    validFrom: getDate(properties, "Vigencia Desde"),
-    validUntil: getDate(properties, "Vigencia Hasta"),
-    waitingPeriodDays: getNumber(properties, "Periodo Carencia"),
-    coverages: getMultiSelectNames(properties, "Coberturas"),
-    exclusions: getTitleOrRichText(properties, "Exclusiones"),
-    maxSurgicalCoverage: getNumber(properties, "Tope Quirúrgico"),
-    plan: plan === "Plus" || plan === "Premium" ? plan : "Básico",
-  };
-}
-
-function getNotionProperties(page: unknown): NotionPropertyMap {
-  if (!isRecord(page) || !isRecord(page.properties)) {
-    throw new Error("La página de póliza no tiene propiedades válidas");
-  }
-
-  return page.properties;
 }
 
 export async function POST(request: Request) {
   try {
-    const body = authorizationRequestSchema.parse(await request.json());
-    const policyPage = await getPolicyById(body.report.policyId);
+    const formData = await request.formData();
+    const medicalReportFile = formData.get("medicalReport");
+    const insurancePolicyFile = formData.get("insurancePolicy");
 
-    if (!policyPage) {
+    if (!isPdfFile(medicalReportFile) || !isPdfFile(insurancePolicyFile)) {
       return NextResponse.json(
-        { error: `Póliza "${body.report.policyId}" no encontrada` },
-        { status: 404 },
-      );
-    }
-
-    const policy = mapPolicyFromNotion(
-      body.report.policyId,
-      getNotionProperties(policyPage),
-    );
-    const result = await runAuthorizationAgent(body.report, policy);
-
-    return NextResponse.json(result, { status: 200 });
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: "Solicitud inválida", details: error.flatten() },
+        { error: "Se requieren dos archivos PDF: informe medico y poliza." },
         { status: 400 },
       );
     }
 
+    if (
+      medicalReportFile.type !== "application/pdf" ||
+      insurancePolicyFile.type !== "application/pdf"
+    ) {
+      return NextResponse.json(
+        { error: "Solo se aceptan archivos PDF." },
+        { status: 400 },
+      );
+    }
+
+    if (
+      medicalReportFile.size > MAX_PDF_SIZE_BYTES ||
+      insurancePolicyFile.size > MAX_PDF_SIZE_BYTES
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "El archivo PDF supera el limite de 10 MB. Por favor sube una version reducida.",
+        },
+        { status: 413 },
+      );
+    }
+
+    const medicalReportBuffer = Buffer.from(
+      await medicalReportFile.arrayBuffer(),
+    );
+    const insurancePolicyBuffer = Buffer.from(
+      await insurancePolicyFile.arrayBuffer(),
+    );
+
+    const reportText = await readPdfTextForField(
+      medicalReportBuffer,
+      "informe medico",
+    );
+    if (reportText instanceof NextResponse) {
+      return reportText;
+    }
+
+    const policyText = await readPdfTextForField(
+      insurancePolicyBuffer,
+      "poliza",
+    );
+    if (policyText instanceof NextResponse) {
+      return policyText;
+    }
+
+    let report;
+    try {
+      report = await parseMedicalReportPdf(reportText);
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "No se pudo extraer la informacion del informe. Verifica que el documento sea legible.",
+        },
+        { status: 422 },
+      );
+    }
+
+    let policy;
+    try {
+      policy = await parseInsurancePolicyPdf(policyText, report.policyId);
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "No se pudo extraer la informacion de la poliza. Verifica que el documento sea legible.",
+        },
+        { status: 422 },
+      );
+    }
+
+    let notionReportPageId: string;
+    let notionPolicyPageId: string;
+
+    try {
+      [notionReportPageId, notionPolicyPageId] = await Promise.all([
+        createMedicalReportRecord({
+          pdfBuffer: medicalReportBuffer,
+          pdfFileName: medicalReportFile.name || "informe_medico.pdf",
+          report,
+        }),
+        createInsurancePolicyRecord(policy),
+      ]);
+    } catch (error) {
+      console.error("Error guardando documentos extraidos en Notion:", error);
+      return NextResponse.json(
+        {
+          error:
+            "No se pudo guardar la informacion extraida en Notion. Verifica los IDs de las bases y sus encabezados.",
+        },
+        { status: 500 },
+      );
+    }
+
+    let savedReport;
+    let savedPolicy;
+
+    try {
+      [savedReport, savedPolicy] = await Promise.all([
+        getMedicalReportRecord(notionReportPageId),
+        getInsurancePolicyRecord(notionPolicyPageId),
+      ]);
+    } catch (error) {
+      console.error("Error leyendo documentos guardados en Notion:", error);
+      return NextResponse.json(
+        {
+          error:
+            "La informacion fue guardada, pero no se pudo leer desde Notion para ejecutar la preautorizacion.",
+        },
+        { status: 500 },
+      );
+    }
+
+    const result = await runAuthorizationAgent(savedReport, savedPolicy);
+
+    return NextResponse.json(
+      { ...result, notionReportPageId, notionPolicyPageId, report: savedReport },
+      { status: 200 },
+    );
+  } catch (error) {
     const message =
       error instanceof Error ? error.message : "Error interno del servidor";
 

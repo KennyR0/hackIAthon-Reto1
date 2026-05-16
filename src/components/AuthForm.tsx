@@ -1,46 +1,84 @@
 "use client";
 
-import { Activity, CalendarClock, FileText, ShieldCheck, UserRound } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
-import type { MedicalReport } from "@/types";
+import { FileText, Shield, X } from "lucide-react";
+import {
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+  type ReactNode,
+  useRef,
+  useState,
+} from "react";
 
-export type AuthFormData = Pick<
-  MedicalReport,
-  "patientId" | "patientName" | "policyId" | "diagnosis" | "procedure" | "urgency"
->;
+export type AuthFormData = {
+  medicalReport: File;
+  insurancePolicy: File;
+};
 
 type AuthFormProps = {
   loading: boolean;
-  onSubmit: (data: AuthFormData) => void;
+  onSubmit: (formData: FormData) => void;
+};
+
+type UploadField = keyof AuthFormData;
+type UploadStatus = "idle" | "selected" | "error";
+
+type UploadState = {
+  file: File | null;
+  status: UploadStatus;
+  message: string | null;
+};
+
+const initialUploadState: UploadState = {
+  file: null,
+  status: "idle",
+  message: null,
 };
 
 export default function AuthForm({ loading, onSubmit }: AuthFormProps) {
-  const [patientId, setPatientId] = useState("");
-  const [patientName, setPatientName] = useState("");
-  const [policyId, setPolicyId] = useState("");
-  const [diagnosis, setDiagnosis] = useState("");
-  const [procedure, setProcedure] = useState("");
-  const [urgency, setUrgency] = useState<MedicalReport["urgency"]>("Programada");
+  const [medicalReport, setMedicalReport] =
+    useState<UploadState>(initialUploadState);
+  const [insurancePolicy, setInsurancePolicy] =
+    useState<UploadState>(initialUploadState);
 
-  const isReady = [patientId, patientName, policyId, diagnosis, procedure].every(
-    (value) => value.trim().length > 0,
-  );
+  const isReady = Boolean(medicalReport.file && insurancePolicy.file);
+
+  function updateField(field: UploadField, file: File | null) {
+    const setter =
+      field === "medicalReport" ? setMedicalReport : setInsurancePolicy;
+
+    if (!file) {
+      setter(initialUploadState);
+      return;
+    }
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setter({
+        file: null,
+        status: "error",
+        message: "Selecciona un archivo con extension .pdf.",
+      });
+      return;
+    }
+
+    setter({
+      file,
+      status: "selected",
+      message: null,
+    });
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!isReady || loading) {
+    if (!isReady || loading || !medicalReport.file || !insurancePolicy.file) {
       return;
     }
 
-    onSubmit({
-      patientId: patientId.trim(),
-      patientName: patientName.trim(),
-      policyId: policyId.trim(),
-      diagnosis: diagnosis.trim(),
-      procedure: procedure.trim(),
-      urgency,
-    });
+    const formData = new FormData();
+    formData.append("medicalReport", medicalReport.file);
+    formData.append("insurancePolicy", insurancePolicy.file);
+    onSubmit(formData);
   }
 
   return (
@@ -53,81 +91,32 @@ export default function AuthForm({ loading, onSubmit }: AuthFormProps) {
           <FileText aria-hidden="true" size={20} />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-[#12323C]">Datos del caso</h2>
+          <h2 className="text-lg font-semibold text-[#12323C]">Documentos del caso</h2>
           <p className="mt-1 text-sm leading-6 text-[#5C7379]">
-            Registre la solicitud quirurgica para emitir la decision administrativa.
+            Carga el informe medico y la poliza para emitir la decision administrativa.
           </p>
         </div>
       </div>
 
       <div className="grid gap-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <TextField
-            icon={<UserRound aria-hidden="true" size={16} />}
-            label="ID paciente"
-            onChange={setPatientId}
-            placeholder="0987654321"
-            value={patientId}
-          />
-          <TextField
-            icon={<UserRound aria-hidden="true" size={16} />}
-            label="Nombre paciente"
-            onChange={setPatientName}
-            placeholder="Maria Alvarez"
-            value={patientName}
-          />
-        </div>
-
-        <TextField
-          icon={<ShieldCheck aria-hidden="true" size={16} />}
-          label="ID poliza"
-          onChange={setPolicyId}
-          placeholder="POL-2024-001"
-          value={policyId}
+        <UploadZone
+          field="medicalReport"
+          icon={<FileText aria-hidden="true" size={22} />}
+          loading={loading}
+          onChange={updateField}
+          state={medicalReport}
+          subtitle="Formulario MSP 053, epicrisis, informe preoperatorio"
+          title="Informe Medico (PDF)"
         />
-
-        <TextareaField
-          label="Diagnostico medico"
-          onChange={setDiagnosis}
-          placeholder="Apendicitis cronica con dolor recurrente en fosa iliaca derecha"
-          value={diagnosis}
+        <UploadZone
+          field="insurancePolicy"
+          icon={<Shield aria-hidden="true" size={22} />}
+          loading={loading}
+          onChange={updateField}
+          state={insurancePolicy}
+          subtitle="IESS, Saludsa, Ecuasanitas, Humana, AIG, Liberty, etc."
+          title="Poliza de Seguro (PDF)"
         />
-
-        <TextareaField
-          label="Procedimiento solicitado"
-          onChange={setProcedure}
-          placeholder="Apendicectomia laparoscopica electiva"
-          value={procedure}
-        />
-
-        <div>
-          <label className="mb-2 block text-sm font-medium text-[#264B55]">
-            Tipo de caso
-          </label>
-          <div className="grid grid-cols-2 rounded-lg border border-[#D6E5E2] bg-[#F6FAF9] p-1">
-            {(["Programada", "Urgente"] as const).map((option) => (
-              <button
-                className={`flex h-10 items-center justify-center gap-2 rounded-md text-sm font-semibold transition-colors ${
-                  urgency === option
-                    ? option === "Urgente"
-                      ? "bg-[#FDECEC] text-[#B42318] shadow-sm"
-                      : "bg-white text-[#0E766E] shadow-sm"
-                    : "text-[#5C7379] hover:bg-white/70"
-                }`}
-                key={option}
-                onClick={() => setUrgency(option)}
-                type="button"
-              >
-                {option === "Urgente" ? (
-                  <Activity aria-hidden="true" size={16} />
-                ) : (
-                  <CalendarClock aria-hidden="true" size={16} />
-                )}
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       <button
@@ -135,61 +124,141 @@ export default function AuthForm({ loading, onSubmit }: AuthFormProps) {
         disabled={!isReady || loading}
         type="submit"
       >
-        {loading ? "Analizando caso..." : "Analizar y emitir decision"}
+        {loading ? "Analizando documentos..." : "Analizar"}
       </button>
     </form>
   );
 }
 
-function TextField({
+function UploadZone({
+  field,
   icon,
-  label,
+  loading,
   onChange,
-  placeholder,
-  value,
+  state,
+  subtitle,
+  title,
 }: {
+  field: UploadField;
   icon: ReactNode;
-  label: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  value: string;
+  loading: boolean;
+  onChange: (field: UploadField, file: File | null) => void;
+  state: UploadState;
+  subtitle: string;
+  title: string;
 }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const selectedFile = state.status === "selected" ? state.file : null;
+  const hasFile = Boolean(selectedFile);
+
+  function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
+    onChange(field, event.target.files?.[0] ?? null);
+    event.target.value = "";
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragging(false);
+
+    if (loading) {
+      return;
+    }
+
+    onChange(field, event.dataTransfer.files[0] ?? null);
+  }
+
   return (
     <div>
-      <label className="mb-2 block text-sm font-medium text-[#264B55]">{label}</label>
-      <div className="flex h-11 items-center gap-2 rounded-lg border border-[#D6E5E2] bg-white px-3 text-[#7A9095] focus-within:border-[#0E766E] focus-within:ring-2 focus-within:ring-[#BFE3DD]">
-        {icon}
-        <input
-          className="min-w-0 flex-1 bg-transparent text-sm text-[#12323C] outline-none placeholder:text-[#8BA0A5]"
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          value={value}
-        />
+      <div className="mb-2 flex items-start gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#E6F3F1] text-[#0E766E]">
+          {icon}
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold text-[#12323C]">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-[#5C7379]">{subtitle}</p>
+        </div>
       </div>
+
+      <div
+        className={`min-h-32 rounded-lg border border-dashed p-4 transition-colors ${
+          state.status === "error"
+            ? "border-[#FCA5A5] bg-[#FEF2F2]"
+            : dragging
+              ? "border-[#0E766E] bg-[#E6F3F1]"
+              : hasFile
+                ? "border-[#8FD5CC] bg-[#F6FAF9]"
+                : "border-[#BFE3DD] bg-white hover:border-[#0E766E] hover:bg-[#F6FAF9]"
+        }`}
+        onClick={() => inputRef.current?.click()}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          setDragging(false);
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={handleDrop}
+        role="button"
+        tabIndex={0}
+      >
+        <input
+          accept="application/pdf,.pdf"
+          className="hidden"
+          disabled={loading}
+          onChange={handleInputChange}
+          ref={inputRef}
+          type="file"
+        />
+
+        {hasFile ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-[#12323C]">
+                {selectedFile?.name}
+              </p>
+              <p className="mt-1 text-xs text-[#5C7379]">
+                {selectedFile ? formatFileSize(selectedFile.size) : ""}
+              </p>
+            </div>
+            <button
+              aria-label={`Quitar ${title}`}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D6E5E2] bg-white text-[#5C7379] transition-colors hover:border-[#0E766E] hover:text-[#0E766E]"
+              disabled={loading}
+              onClick={(event) => {
+                event.stopPropagation();
+                onChange(field, null);
+              }}
+              type="button"
+            >
+              <X aria-hidden="true" size={16} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex min-h-20 flex-col items-center justify-center text-center">
+            <p className="text-sm font-semibold text-[#12323C]">
+              Arrastra el PDF aqui o haz click para seleccionar
+            </p>
+            <p className="mt-2 text-xs text-[#5C7379]">
+              Solo archivos PDF de hasta 10 MB
+            </p>
+          </div>
+        )}
+      </div>
+
+      {state.status === "error" && state.message ? (
+        <p className="mt-2 text-sm text-[#B42318]">{state.message}</p>
+      ) : null}
     </div>
   );
 }
 
-function TextareaField({
-  label,
-  onChange,
-  placeholder,
-  value,
-}: {
-  label: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-  value: string;
-}) {
-  return (
-    <div>
-      <label className="mb-2 block text-sm font-medium text-[#264B55]">{label}</label>
-      <textarea
-        className="min-h-28 w-full resize-none rounded-lg border border-[#D6E5E2] bg-white px-3 py-3 text-sm leading-6 text-[#12323C] outline-none placeholder:text-[#8BA0A5] focus:border-[#0E766E] focus:ring-2 focus:ring-[#BFE3DD]"
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        value={value}
-      />
-    </div>
-  );
+function formatFileSize(size: number): string {
+  if (size < 1024 * 1024) {
+    return `${Math.max(1, Math.round(size / 1024))} KB`;
+  }
+
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
