@@ -40,7 +40,7 @@ Urgencia declarada por el solicitante: ${report.urgency}
     startedAt,
   );
 
-  await createAuthorizationResult({
+  const notionResultPageId = await createAuthorizationResult({
     patientId: report.patientId,
     policyId: report.policyId,
     decision: result.decision,
@@ -51,5 +51,10 @@ Urgencia declarada por el solicitante: ${report.urgency}
     isUrgent: result.isUrgent,
   });
 
-  return result;
+  return {
+    ...result,
+    patientId: report.patientId,
+    patientName: report.patientName,
+    notionResultPageId,
+  };
 }

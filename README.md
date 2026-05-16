@@ -1,8 +1,8 @@
 # Agente de Pre-Autorizacion Quirurgica
 
 Interfaz web y agente inteligente para automatizar la pre-autorizacion de
-cirugias. El sistema analiza un caso medico, valida la poliza asociada y emite
-una decision administrativa en tiempo real.
+cirugias. El sistema analiza un informe medico y una poliza cargados en PDF,
+valida la cobertura y emite una decision administrativa en tiempo real.
 
 ## Entregables HackIAthon
 
@@ -14,10 +14,10 @@ Pendiente: agrega aqui la URL del repositorio GitHub o GitLab.
 
 ## Funcionalidades
 
-- Formulario clinico para registrar paciente, poliza, diagnostico,
-  procedimiento y urgencia.
+- Carga de dos PDFs: informe medico hospitalario y poliza de seguro.
 - Endpoint real `POST /api/authorize` conectado al motor de decision.
-- Validacion de poliza desde Notion.
+- Extraccion estructurada de datos desde PDFs mediante LLM.
+- Validacion de poliza desde la informacion extraida del PDF.
 - Normalizacion medica con proveedor LLM configurable.
 - Resultado visual para estados `Aprobado`, `Revision` y `Rechazado`.
 - Descarga directa de PDF de preaprobacion para casos aprobados.
@@ -33,6 +33,7 @@ Pendiente: agrega aqui la URL del repositorio GitHub o GitLab.
 - Notion API
 - LLM provider configurable
 - pdf-lib
+- pdf-parse
 - lucide-react
 
 ## Ejecutar localmente
@@ -53,22 +54,27 @@ http://localhost:3000
 Crea un archivo `.env.local` en la raiz del proyecto:
 
 ```bash
-NOTION_TOKEN=
-NOTION_POLICIES_DB_ID=
-NOTION_RESULTS_DB_ID=
 OPENAI_API_KEY=
+LLM_PROVIDER=openai
+
+NOTION_TOKEN=
+NOTION_RESULTS_DB_ID=
+
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
 Variables opcionales:
 
 ```bash
-LLM_PROVIDER=openai
 LLM_FALLBACK_PROVIDER=
 OPENAI_MODEL=
 CEREBRAS_API_KEY=
 GROQ_API_KEY=
 GEMINI_API_KEY=
 ```
+
+`NOTION_POLICIES_DB_ID` y `NOTION_REPORTS_DB_ID` ya no son necesarios para el
+flujo principal. Notion se usa solo para registrar resultados finales.
 
 ## Despliegue en Vercel
 
@@ -88,12 +94,9 @@ la funcion complete llamadas a Notion y al proveedor LLM.
 ### Aprobado
 
 ```text
-ID Paciente: 0987654321
-Nombre: Maria Alvarez
-ID Poliza: POL-2024-001
-Diagnostico: Apendicitis cronica con dolor recurrente en fosa iliaca derecha
-Procedimiento: Apendicectomia laparoscopica electiva
-Urgencia: Programada
+Informe PDF: Maria Alvarez, CC 0987654321, apendicitis cronica,
+apendicectomia laparoscopica electiva, urgencia programada.
+Poliza PDF: plan con Cirugia General cubierta, vigencia activa y carencia cumplida.
 ```
 
 Resultado esperado: tarjeta verde y descarga de PDF de preaprobacion.
@@ -101,12 +104,9 @@ Resultado esperado: tarjeta verde y descarga de PDF de preaprobacion.
 ### Revision
 
 ```text
-ID Paciente: 2233445566
-Nombre: Carlos Mendoza
-ID Poliza: POL-2024-002
-Diagnostico: Dolor persistente de rodilla con sospecha de lesion ligamentaria
-Procedimiento: Reconstruccion artroscopica de ligamento cruzado anterior
-Urgencia: Programada
+Informe PDF: apendicitis aguda perforada con peritonitis generalizada,
+requiere laparotomia de emergencia inmediata.
+Poliza PDF: vigencia activa con carencia para cirugias electivas.
 ```
 
 Resultado esperado: tarjeta de revision y descarga de PDF de documentos
@@ -115,12 +115,8 @@ faltantes si el agente solicita respaldos.
 ### Rechazado
 
 ```text
-ID Paciente: 5566778899
-Nombre: Ana Torres
-ID Poliza: POL-2024-003
-Diagnostico: Ruptura de ligamento cruzado anterior de rodilla derecha
-Procedimiento: Reconstruccion artroscopica de ligamento cruzado anterior
-Urgencia: Programada
+Informe PDF: lesion ligamentaria de rodilla, reconstruccion artroscopica.
+Poliza PDF: plan basico sin cobertura de Ortopedia y Traumatologia.
 ```
 
 Resultado esperado: tarjeta roja con justificacion administrativa.
