@@ -7,7 +7,7 @@ export type JsonSchema = {
   additionalProperties: false;
 };
 
-type LLMProvider = "openai" | "cerebras";
+type LLMProvider = "openai" | "cerebras" | "groq" | "gemini";
 
 type OpenAIOutputContent = {
   text?: string;
@@ -39,9 +39,15 @@ type CerebrasCompletionPayload = {
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const CEREBRAS_CHAT_COMPLETIONS_URL =
   "https://api.cerebras.ai/v1/chat/completions";
+const GROQ_CHAT_COMPLETIONS_URL =
+  "https://api.groq.com/openai/v1/chat/completions";
+const GEMINI_BASE_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models";
 
 const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
 const DEFAULT_CEREBRAS_MODEL = "llama-3.3-70b";
+const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -66,11 +72,36 @@ function parseJson<T>(raw: string, schema: z.ZodType<T>): T {
 
 function getProvider(): LLMProvider {
   const provider = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
-  if (provider === "openai" || provider === "cerebras") {
+  if (
+    provider === "openai" ||
+    provider === "cerebras" ||
+    provider === "groq" ||
+    provider === "gemini"
+  ) {
     return provider;
   }
   throw new Error(
-    `Unsupported LLM_PROVIDER "${provider}". Use "openai" or "cerebras".`,
+    `Unsupported LLM_PROVIDER "${provider}". Use "openai", "cerebras", "groq", or "gemini".`,
+  );
+}
+
+function getFallbackProvider(): LLMProvider | null {
+  const fallbackRaw = process.env.LLM_FALLBACK_PROVIDER?.toLowerCase().trim();
+  if (!fallbackRaw) {
+    return null;
+  }
+
+  if (
+    fallbackRaw === "openai" ||
+    fallbackRaw === "cerebras" ||
+    fallbackRaw === "groq" ||
+    fallbackRaw === "gemini"
+  ) {
+    return fallbackRaw;
+  }
+
+  throw new Error(
+    `Unsupported LLM_FALLBACK_PROVIDER "${fallbackRaw}". Use "openai", "cerebras", "groq", or "gemini".`,
   );
 }
 
@@ -187,6 +218,133 @@ async function callCerebrasJson<T>(options: {
   return parseJson(text, options.zodSchema);
 }
 
+async function callGroqJson<T>(options: {
+  systemPrompt: string;
+  userMessage: string;
+  schemaName: string;
+  jsonSchema: JsonSchema;
+  zodSchema: z.ZodType<T>;
+}): Promise<T> {
+  const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnv("GROQ_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
+      messages: [
+        { role: "system", content: options.systemPrompt },
+        { role: "user", content: options.userMessage },
+      ],
+      stream: false,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: options.schemaName,
+          strict: true,
+          schema: options.jsonSchema,
+        },
+      },
+    }),
+  });
+
+  const payload = (await response.json()) as CerebrasCompletionPayload;
+
+  if (!response.ok) {
+    throw new Error(
+      `Groq API error: ${payload.error?.message ?? response.statusText}`,
+    );
+  }
+
+  const text = payload.choices?.[0]?.message?.content?.trim();
+  if (!text) {
+    throw new Error("Groq response did not include output text");
+  }
+
+  return parseJson(text, options.zodSchema);
+}
+
+type GeminiContentPart = { text?: string };
+type GeminiCandidate = { content?: { parts?: GeminiContentPart[] } };
+type GeminiPayload = {
+  candidates?: GeminiCandidate[];
+  error?: { message?: string };
+};
+
+async function callGeminiJson<T>(options: {
+  systemPrompt: string;
+  userMessage: string;
+  schemaName: string;
+  jsonSchema: JsonSchema;
+  zodSchema: z.ZodType<T>;
+}): Promise<T> {
+  const model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const response = await fetch(
+    `${GEMINI_BASE_URL}/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": requireEnv("GEMINI_API_KEY"),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `${options.systemPrompt}\n\n${options.userMessage}`,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: options.jsonSchema,
+        },
+      }),
+    },
+  );
+
+  const payload = (await response.json()) as GeminiPayload;
+
+  if (!response.ok) {
+    throw new Error(
+      `Gemini API error: ${payload.error?.message ?? response.statusText}`,
+    );
+  }
+
+  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!text) {
+    throw new Error("Gemini response did not include output text");
+  }
+
+  return parseJson(text, options.zodSchema);
+}
+
+async function callByProvider<T>(
+  provider: LLMProvider,
+  options: {
+    systemPrompt: string;
+    userMessage: string;
+    schemaName: string;
+    jsonSchema: JsonSchema;
+    zodSchema: z.ZodType<T>;
+  },
+): Promise<T> {
+  if (provider === "openai") {
+    return callOpenAIJson(options);
+  }
+  if (provider === "cerebras") {
+    return callCerebrasJson(options);
+  }
+  if (provider === "groq") {
+    return callGroqJson(options);
+  }
+  return callGeminiJson(options);
+}
+
 export async function callLLMJson<T>(options: {
   systemPrompt: string;
   userMessage: string;
@@ -194,11 +352,30 @@ export async function callLLMJson<T>(options: {
   jsonSchema: JsonSchema;
   zodSchema: z.ZodType<T>;
 }): Promise<T> {
-  const provider = getProvider();
+  const primaryProvider = getProvider();
+  const fallbackProvider = getFallbackProvider();
 
-  if (provider === "cerebras") {
-    return callCerebrasJson(options);
+  try {
+    return await callByProvider(primaryProvider, options);
+  } catch (primaryError) {
+    if (!fallbackProvider || fallbackProvider === primaryProvider) {
+      throw primaryError;
+    }
+
+    try {
+      return await callByProvider(fallbackProvider, options);
+    } catch (fallbackError) {
+      const primaryMessage =
+        primaryError instanceof Error
+          ? primaryError.message
+          : "Unknown primary provider error";
+      const fallbackMessage =
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : "Unknown fallback provider error";
+      throw new Error(
+        `Primary provider "${primaryProvider}" failed: ${primaryMessage}. Fallback provider "${fallbackProvider}" failed: ${fallbackMessage}.`,
+      );
+    }
   }
-
-  return callOpenAIJson(options);
 }
