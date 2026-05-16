@@ -1,26 +1,99 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  GlobalWorkerOptions,
-  getDocument,
-  VerbosityLevel,
-} from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const MAX_PDF_SIZE_BYTES = 10 * 1024 * 1024;
 const MIN_USEFUL_TEXT_CHARS = 120;
 const MAX_TEXT_CHARS_FOR_LLM = 12_000;
 
 let workerConfigured = false;
+let pdfjsModulePromise: Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")> | null =
+  null;
 
 type PdfTextItem = {
   str: string;
 };
 
-type PdfDocumentOptions = Parameters<typeof getDocument>[0] & {
-  disableWorker?: boolean;
-};
+class MinimalDOMMatrix {
+  a = 1;
+  b = 0;
+  c = 0;
+  d = 1;
+  e = 0;
+  f = 0;
 
-function configurePdfWorker() {
+  constructor(init?: number[]) {
+    if (Array.isArray(init) && init.length >= 6) {
+      [this.a, this.b, this.c, this.d, this.e, this.f] = init;
+    }
+  }
+
+  translate(x = 0, y = 0) {
+    this.e += x;
+    this.f += y;
+    return this;
+  }
+
+  scale(scaleX = 1, scaleY = scaleX) {
+    this.a *= scaleX;
+    this.d *= scaleY;
+    return this;
+  }
+}
+
+class MinimalImageData {
+  data: Uint8ClampedArray;
+  height: number;
+  width: number;
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+    this.data = new Uint8ClampedArray(width * height * 4);
+  }
+}
+
+class MinimalPath2D {}
+
+function installPdfJsPolyfills() {
+  const target = globalThis as Record<string, unknown>;
+
+  target.DOMMatrix ??= MinimalDOMMatrix;
+  target.ImageData ??= MinimalImageData;
+  target.Path2D ??= MinimalPath2D;
+}
+
+async function loadPdfJs() {
+  installPdfJsPolyfills();
+  pdfjsModulePromise ??= importPdfJsWithoutCanvasWarnings();
+  return pdfjsModulePromise;
+}
+
+async function importPdfJsWithoutCanvasWarnings() {
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    const message = String(args[0] ?? "");
+    if (
+      message.includes('Cannot load "@napi-rs/canvas"') ||
+      message.includes("Cannot polyfill `DOMMatrix`") ||
+      message.includes("Cannot polyfill `ImageData`") ||
+      message.includes("Cannot polyfill `Path2D`")
+    ) {
+      return;
+    }
+
+    originalWarn(...args);
+  };
+
+  try {
+    return await import("pdfjs-dist/legacy/build/pdf.mjs");
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
+function configurePdfWorker(
+  pdfjs: typeof import("pdfjs-dist/legacy/build/pdf.mjs"),
+) {
   if (workerConfigured) {
     return;
   }
@@ -33,7 +106,7 @@ function configurePdfWorker() {
     "build",
     "pdf.worker.mjs",
   );
-  GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
+  pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   workerConfigured = true;
 }
 
@@ -47,15 +120,16 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
     );
   }
 
-  configurePdfWorker();
+  const pdfjs = await loadPdfJs();
+  configurePdfWorker(pdfjs);
 
-  const options: PdfDocumentOptions = {
+  const options = {
     data: new Uint8Array(buffer),
     disableWorker: true,
     useSystemFonts: true,
-    verbosity: VerbosityLevel.ERRORS,
-  };
-  const loadingTask = getDocument(options);
+    verbosity: pdfjs.VerbosityLevel.ERRORS,
+  } as Parameters<typeof pdfjs.getDocument>[0] & { disableWorker?: boolean };
+  const loadingTask = pdfjs.getDocument(options);
 
   try {
     const document = await loadingTask.promise;
