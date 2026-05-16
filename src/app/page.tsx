@@ -5,6 +5,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ClipboardCheck,
+  Download,
+  ExternalLink,
   FileText,
   LoaderCircle,
   ShieldCheck,
@@ -105,6 +107,29 @@ export default function Home() {
             <Metric icon={Activity} label="Decision" value="Tiempo real" />
             <Metric icon={FileText} label="PDF" value="Descarga" />
           </div>
+        </div>
+      </section>
+
+      <section className="border-b border-[#D6E5E2] bg-[#F6FAF9]">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+          <div>
+            <p className="text-sm font-semibold text-[#12323C]">
+              Casos de prueba disponibles
+            </p>
+            <p className="mt-1 text-sm leading-6 text-[#5C7379]">
+              Catalogo de distintos casos de pruebas disponible para su descarga.
+            </p>
+          </div>
+          <a
+            className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#0E766E] px-4 text-sm font-semibold text-white transition-colors hover:bg-[#0B625C] sm:w-auto"
+            href="/casos-prueba"
+            rel="noreferrer"
+            target="_blank"
+          >
+            <Download aria-hidden="true" size={17} />
+            Ver casos de prueba
+            <ExternalLink aria-hidden="true" size={15} />
+          </a>
         </div>
       </section>
 
