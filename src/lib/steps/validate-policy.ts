@@ -64,6 +64,15 @@ export function validatePolicy(
     );
   }
 
+  if (
+    exclusionList.includes("requiere") &&
+    exclusionList.includes("resonancia")
+  ) {
+    warnings.push(
+      "Documento faltante: resonancia magnetica vigente para auditoria de cirugia de columna.",
+    );
+  }
+
   const withinCoverageLimit = estimatedCost <= policy.maxSurgicalCoverage;
   if (!withinCoverageLimit) {
     warnings.push(

@@ -1,5 +1,10 @@
 import { Client } from "@notionhq/client";
-import type { AuthorizationResult, InsurancePolicy, MedicalReport } from "@/types";
+import type {
+  AuthorizationResult,
+  InsurancePolicy,
+  MedicalReport,
+  PreauthorizationCase,
+} from "@/types";
 
 export const notion = new Client({
   auth: process.env.NOTION_TOKEN,
@@ -130,6 +135,18 @@ function getSelectProperty(
   return typeof property.select.name === "string" ? property.select.name : "";
 }
 
+function getCheckboxProperty(
+  properties: Record<string, unknown>,
+  propertyName: string,
+): boolean {
+  const property = properties[propertyName];
+  if (!isRecord(property)) {
+    return false;
+  }
+
+  return property.checkbox === true;
+}
+
 function getMultiSelectProperty(
   properties: Record<string, unknown>,
   propertyName: string,
@@ -156,6 +173,34 @@ function normalizePlan(plan: string): InsurancePolicy["plan"] {
 
 function normalizeUrgency(urgency: string): MedicalReport["urgency"] {
   return urgency === "Urgente" ? "Urgente" : "Programada";
+}
+
+function normalizeDecision(decision: string): AuthorizationResult["decision"] {
+  if (decision === "Aprobado" || decision === "Rechazado") {
+    return decision;
+  }
+
+  return "Revisión";
+}
+
+function splitDocuments(value: string): string[] {
+  return value
+    .split(/[,;\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getSupplementalStatus(missingDocuments: string[]): PreauthorizationCase["supplementalStatus"] {
+  if (missingDocuments.length === 0) {
+    return "no-aplica";
+  }
+
+  const text = missingDocuments.join(" ").toLowerCase();
+  return text.includes("documentacion cargada") ||
+    text.includes("documento complementario") ||
+    text.includes("cargado")
+    ? "cargado"
+    : "pendiente";
 }
 
 export async function getMedicalReportRecord(
@@ -319,6 +364,121 @@ export async function createAuthorizationResult(data: {
   });
 
   return response.id;
+}
+
+function authorizationPageToCase(page: unknown): PreauthorizationCase {
+  const properties = getProperties(page);
+  const missingDocuments = splitDocuments(
+    getTextProperty(properties, "Documentos Faltantes"),
+  );
+
+  return {
+    id: isRecord(page) && typeof page.id === "string" ? page.id : "",
+    caseCode: getTextProperty(properties, "Caso"),
+    patientId: getTextProperty(properties, "ID Paciente"),
+    policyId: getTextProperty(properties, "ID Póliza"),
+    decision: normalizeDecision(getSelectProperty(properties, "Decisión")),
+    cie10Code: getTextProperty(properties, "Código CIE-10"),
+    cptCode: getTextProperty(properties, "Código CPT/CUPS"),
+    justification: getTextProperty(properties, "Justificación"),
+    missingDocuments,
+    isUrgent: getCheckboxProperty(properties, "Urgente"),
+    decidedAt: getDateProperty(properties, "Fecha Decisión"),
+    supplementalStatus: getSupplementalStatus(missingDocuments),
+    supplementalFiles: missingDocuments
+      .filter((item) => item.toLowerCase().includes("cargad"))
+      .map((item) => item.replace(/^documentacion cargada:\s*/i, "")),
+  };
+}
+
+export async function getAuthorizationResultRecord(
+  pageId: string,
+): Promise<PreauthorizationCase> {
+  const page = await notion.pages.retrieve({ page_id: pageId });
+  return authorizationPageToCase(page);
+}
+
+export async function listAuthorizationResults(
+  pageSize = 25,
+): Promise<PreauthorizationCase[]> {
+  const dataSourceId = await getPrimaryDataSourceId(
+    requireEnv("NOTION_RESULTS_DB_ID"),
+  );
+
+  const response = await notion.dataSources.query({
+    data_source_id: dataSourceId,
+    page_size: pageSize,
+    sorts: [
+      {
+        property: "Fecha Decisión",
+        direction: "descending",
+      },
+    ],
+  });
+
+  return response.results.map(authorizationPageToCase);
+}
+
+export async function updateAuthorizationAfterSupplement(data: {
+  resultPageId: string;
+  fileBuffer: Buffer;
+  fileName: string;
+  decision: AuthorizationResult["decision"];
+  justification: string;
+  missingDocuments: string[];
+  note?: string;
+}) {
+  const uploadedFileId = await uploadFileToNotion({
+    buffer: data.fileBuffer,
+    contentType: "application/pdf",
+    fileName: data.fileName,
+  });
+  const timestamp = new Date().toISOString();
+  const statusText = `Reevaluacion por documento complementario: ${data.fileName} (${timestamp})`;
+
+  await notion.pages.update({
+    page_id: data.resultPageId,
+    properties: {
+      Decisión: { select: { name: data.decision } },
+      Justificación: { rich_text: richText(data.justification) },
+      "Documentos Faltantes": {
+        rich_text: richText(data.missingDocuments.join(", ")),
+      },
+      "Fecha Decisión": { date: { start: timestamp } },
+    },
+  });
+
+  return notion.blocks.children.append({
+    block_id: data.resultPageId,
+    children: [
+      {
+        object: "block",
+        type: "callout",
+        callout: {
+          rich_text: richText(
+            data.note
+              ? `${statusText}. Nueva decision: ${data.decision}. Nota: ${data.note}`
+              : statusText,
+          ),
+          color:
+            data.decision === "Aprobado"
+              ? "green_background"
+              : data.decision === "Rechazado"
+                ? "red_background"
+                : "yellow_background",
+        },
+      },
+      {
+        object: "block",
+        type: "file",
+        file: {
+          type: "file_upload",
+          file_upload: { id: uploadedFileId },
+          caption: richText("Documento complementario para reevaluacion."),
+        },
+      },
+    ],
+  });
 }
 
 export async function appendAuthorizationValidation(data: {

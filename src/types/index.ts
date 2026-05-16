@@ -35,6 +35,22 @@ export interface AuthorizationResult {
   notionPolicyPageId?: string;
 }
 
+export interface PreauthorizationCase {
+  id: string;
+  caseCode: string;
+  patientId: string;
+  policyId: string;
+  decision: AuthorizationResult["decision"];
+  cie10Code: string;
+  cptCode: string;
+  justification: string;
+  missingDocuments: string[];
+  isUrgent: boolean;
+  decidedAt: string;
+  supplementalStatus: "pendiente" | "cargado" | "no-aplica";
+  supplementalFiles: string[];
+}
+
 export interface ExtractionError {
   field: "medicalReport" | "insurancePolicy";
   message: string;

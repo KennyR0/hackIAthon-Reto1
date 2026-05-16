@@ -89,6 +89,9 @@ CAMPOS A EXTRAER:
   "Cirugía Torácica", "Trasplantes".
   Para IESS incluir todas las anteriores.
 - exclusions: texto libre con las exclusiones relevantes.
+  Tambien incluir condiciones administrativas y requisitos documentales
+  detectados, por ejemplo resonancia magnetica, orden quirurgica, informe de
+  evolucion, biopsia, resultados de laboratorio o autorizaciones previas.
   Exclusiones comunes en Ecuador:
   * Condiciones preexistentes no declaradas (primeros 2 años)
   * Cirugía estética o cosmética (salvo reconstructiva por accidente)

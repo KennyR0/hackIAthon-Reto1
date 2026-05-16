@@ -67,6 +67,13 @@ function ensureReviewDocuments(
     return ["Validación manual de codificación médica"];
   }
 
+  const documentWarning = policyValidation.warnings.find((warning) =>
+    warning.toLowerCase().includes("documento faltante"),
+  );
+  if (documentWarning) {
+    return [documentWarning.replace(/^Documento faltante:\s*/i, "")];
+  }
+
   if (policyValidation.warnings.length > 0) {
     return ["Revisión administrativa del tope quirúrgico y posible copago"];
   }

@@ -1,7 +1,19 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, Download, FileText, Shield, Stethoscope } from "lucide-react";
-import { testCases, type TestCaseFile } from "@/lib/test-cases";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Download,
+  FileText,
+  Shield,
+  Stethoscope,
+} from "lucide-react";
+import {
+  specialTestCases,
+  testCases,
+  type TestCase,
+  type TestCaseFile,
+} from "@/lib/test-cases";
 
 export const metadata: Metadata = {
   title: "Casos de prueba | Agente de Pre-Autorizacion",
@@ -42,55 +54,122 @@ export default function TestCasesPage() {
                 Total disponible
               </p>
               <p className="mt-1 text-2xl font-bold text-[#12323C]">
-                {testCases.length} casos
+                {testCases.length + specialTestCases.length} casos
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-7xl gap-4 px-5 py-6 md:grid-cols-2 xl:grid-cols-3 lg:px-8">
-        {testCases.map((testCase) => (
-          <article
-            className="rounded-lg border border-[#D6E5E2] bg-white p-5 shadow-sm"
-            key={testCase.id}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wide text-[#0E766E]">
-                  {testCase.label}
-                </p>
-                <h2 className="mt-2 text-xl font-bold text-[#12323C]">
-                  {testCase.title}
-                </h2>
-              </div>
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#E6F3F1] text-[#0E766E]">
-                <FileText aria-hidden="true" size={22} />
-              </div>
-            </div>
+      <section className="mx-auto max-w-7xl px-5 py-6 lg:px-8">
+        <SectionHeader
+          description="Documentos simulados y controlados para validar resultados esperados."
+          title="Casos base"
+        />
+        <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {testCases.map((testCase) => (
+            <TestCaseCard key={testCase.id} testCase={testCase} />
+          ))}
+        </div>
+      </section>
 
-            <p className="mt-4 text-sm leading-6 text-[#5C7379]">
-              {testCase.description}
-            </p>
-
-            <div className="mt-4 rounded-lg border border-[#D6E5E2] bg-[#F6FAF9] p-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-[#7A9095]">
-                Resultado esperado
-              </p>
-              <p className="mt-1 text-sm font-semibold text-[#12323C]">
-                {testCase.expectedResult}
-              </p>
+      <section className="mx-auto max-w-7xl px-5 pb-8 lg:px-8">
+        <div className="rounded-lg border border-[#FED7AA] bg-[#FFF7ED] p-4">
+          <div className="flex gap-3">
+            <AlertTriangle
+              aria-hidden="true"
+              className="mt-0.5 shrink-0 text-[#C2410C]"
+              size={20}
+            />
+            <div>
+              <SectionHeader
+                description="Documentos externos que no coinciden perfectamente con el formato del sistema. Usalos para probar extraccion, tolerancia a ambiguedades y manejo de datos incompletos."
+                title="Casos de prueba especiales"
+              />
             </div>
-
-            <div className="mt-5 grid gap-2">
-              {testCase.files.map((file) => (
-                <DownloadLink file={file} key={file.href} />
-              ))}
-            </div>
-          </article>
-        ))}
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {specialTestCases.map((testCase) => (
+              <TestCaseCard key={testCase.id} special testCase={testCase} />
+            ))}
+          </div>
+        </div>
       </section>
     </main>
+  );
+}
+
+function SectionHeader({
+  description,
+  title,
+}: {
+  description: string;
+  title: string;
+}) {
+  return (
+    <div>
+      <h2 className="text-lg font-bold text-[#12323C]">{title}</h2>
+      <p className="mt-1 text-sm leading-6 text-[#5C7379]">{description}</p>
+    </div>
+  );
+}
+
+function TestCaseCard({
+  special = false,
+  testCase,
+}: {
+  special?: boolean;
+  testCase: TestCase;
+}) {
+  return (
+    <article
+      className={`rounded-lg border bg-white p-5 shadow-sm ${
+        special ? "border-[#FED7AA]" : "border-[#D6E5E2]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p
+            className={`text-xs font-bold uppercase tracking-wide ${
+              special ? "text-[#C2410C]" : "text-[#0E766E]"
+            }`}
+          >
+            {testCase.label}
+          </p>
+          <h2 className="mt-2 text-xl font-bold text-[#12323C]">
+            {testCase.title}
+          </h2>
+        </div>
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${
+            special
+              ? "bg-[#FFEDD5] text-[#C2410C]"
+              : "bg-[#E6F3F1] text-[#0E766E]"
+          }`}
+        >
+          <FileText aria-hidden="true" size={22} />
+        </div>
+      </div>
+
+      <p className="mt-4 text-sm leading-6 text-[#5C7379]">
+        {testCase.description}
+      </p>
+
+      <div className="mt-4 rounded-lg border border-[#D6E5E2] bg-[#F6FAF9] p-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-[#7A9095]">
+          Resultado esperado
+        </p>
+        <p className="mt-1 text-sm font-semibold text-[#12323C]">
+          {testCase.expectedResult}
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-2">
+        {testCase.files.map((file) => (
+          <DownloadLink file={file} key={file.href} />
+        ))}
+      </div>
+    </article>
   );
 }
 

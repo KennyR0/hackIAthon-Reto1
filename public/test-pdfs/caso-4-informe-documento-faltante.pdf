@@ -1,0 +1,42 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj
+4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+5 0 obj << /Length 613 >> stream
+BT
+/F1 18 Tf
+48 730 Td
+(Informe medico hospitalario - Caso con documento faltante) Tj
+/F1 11 Tf
+0 -34 Td
+(Hospital Vozandes Quito) Tj
+0 -18 Td
+(Paciente: Julian Mateo Cardenas Ponce) Tj
+0 -18 Td
+(Cedula: 1717171717) Tj
+0 -18 Td
+(Poliza: POL-DOC-FALTANTE-004) Tj
+0 -18 Td
+(Diagnostico principal: Hernia discal lumbar L4-L5 con radiculopatia derecha persistente.) Tj
+0 -18 Td
+(Procedimiento solicitado: Microdiscectomia lumbar programada.) Tj
+0 -18 Td
+(Observacion administrativa: resonancia magnetica debe adjuntarse para auditoria.) Tj
+0 -18 Td
+(Medico tratante: Dra. Cristina Navas, Neurocirugia.) Tj
+0 -18 Td
+ET
+endstream endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+975
+%%EOF
