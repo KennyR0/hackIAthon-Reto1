@@ -48,6 +48,8 @@ const DEFAULT_OPENAI_MODEL = "gpt-5-mini";
 const DEFAULT_CEREBRAS_MODEL = "llama-3.3-70b";
 const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
+const GROQ_MAX_RATE_LIMIT_RETRIES = 2;
+const GROQ_MAX_RETRY_DELAY_MS = 5_000;
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -68,6 +70,34 @@ function parseJson<T>(raw: string, schema: z.ZodType<T>): T {
   }
 
   return schema.parse(parsed);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getRetryDelayMs(response: Response, message?: string): number | null {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.ceil(seconds * 1_000);
+    }
+  }
+
+  const match = message?.match(/try again in\s+([\d.]+)\s*(ms|s)/i);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value < 0) {
+    return null;
+  }
+
+  return match[2].toLowerCase() === "s"
+    ? Math.ceil(value * 1_000)
+    : Math.ceil(value);
 }
 
 function getProvider(): LLMProvider {
@@ -225,44 +255,59 @@ async function callGroqJson<T>(options: {
   jsonSchema: JsonSchema;
   zodSchema: z.ZodType<T>;
 }): Promise<T> {
-  const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${requireEnv("GROQ_API_KEY")}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
-      messages: [
-        { role: "system", content: options.systemPrompt },
-        { role: "user", content: options.userMessage },
-      ],
-      stream: false,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: options.schemaName,
-          strict: true,
-          schema: options.jsonSchema,
-        },
+  for (let attempt = 0; attempt <= GROQ_MAX_RATE_LIMIT_RETRIES; attempt++) {
+    const response = await fetch(GROQ_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${requireEnv("GROQ_API_KEY")}`,
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL ?? DEFAULT_GROQ_MODEL,
+        messages: [
+          { role: "system", content: options.systemPrompt },
+          { role: "user", content: options.userMessage },
+        ],
+        stream: false,
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: options.schemaName,
+            strict: true,
+            schema: options.jsonSchema,
+          },
+        },
+      }),
+    });
 
-  const payload = (await response.json()) as CerebrasCompletionPayload;
+    const payload = (await response.json()) as CerebrasCompletionPayload;
 
-  if (!response.ok) {
-    throw new Error(
-      `Groq API error: ${payload.error?.message ?? response.statusText}`,
-    );
+    if (!response.ok) {
+      const message = payload.error?.message ?? response.statusText;
+      const retryDelayMs = getRetryDelayMs(response, message);
+
+      if (
+        response.status === 429 &&
+        retryDelayMs !== null &&
+        retryDelayMs <= GROQ_MAX_RETRY_DELAY_MS &&
+        attempt < GROQ_MAX_RATE_LIMIT_RETRIES
+      ) {
+        await sleep(retryDelayMs + 250);
+        continue;
+      }
+
+      throw new Error(`Groq API error: ${message}`);
+    }
+
+    const text = payload.choices?.[0]?.message?.content?.trim();
+    if (!text) {
+      throw new Error("Groq response did not include output text");
+    }
+
+    return parseJson(text, options.zodSchema);
   }
 
-  const text = payload.choices?.[0]?.message?.content?.trim();
-  if (!text) {
-    throw new Error("Groq response did not include output text");
-  }
-
-  return parseJson(text, options.zodSchema);
+  throw new Error("Groq API error: rate limit retries exhausted");
 }
 
 type GeminiContentPart = { text?: string };

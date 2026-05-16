@@ -1,26 +1,32 @@
-import type { InsurancePolicy, MedicalReport } from "@/types";
+import type { ClinicalExtraction, InsurancePolicy, MedicalReport } from "@/types";
 import { createAuthorizationResult } from "@/lib/notion";
-import { extractClinicalData } from "@/lib/steps/extract-clinical";
 import { generateDecision } from "@/lib/steps/generate-decision";
 import { normalizeMedicalCodes } from "@/lib/steps/normalize-codes";
 import { validatePolicy } from "@/lib/steps/validate-policy";
 
 const ESTIMATED_SURGERY_COST_USD = 5_000;
 
+function clinicalFromReport(report: MedicalReport): ClinicalExtraction {
+  return {
+    primaryDiagnosis: report.diagnosis,
+    secondaryDiagnoses: [],
+    requestedProcedure: report.procedure,
+    urgency: report.urgency,
+    urgencyJustification:
+      report.urgency === "Urgente"
+        ? "Urgencia extraida del informe medico."
+        : null,
+    treatingPhysician: null,
+    clinicalNotes: `Informe emitido el ${report.reportDate}.`,
+  };
+}
+
 export async function runAuthorizationAgent(
   report: MedicalReport,
   policy: InsurancePolicy,
 ) {
   const startedAt = Date.now();
-  const reportText = `
-Paciente: ${report.patientName}
-Fecha del informe: ${report.reportDate}
-Diagnóstico reportado: ${report.diagnosis}
-Procedimiento solicitado: ${report.procedure}
-Urgencia declarada por el solicitante: ${report.urgency}
-  `.trim();
-
-  const clinical = await extractClinicalData(reportText);
+  const clinical = clinicalFromReport(report);
   const codes = await normalizeMedicalCodes(
     clinical.primaryDiagnosis,
     clinical.requestedProcedure,

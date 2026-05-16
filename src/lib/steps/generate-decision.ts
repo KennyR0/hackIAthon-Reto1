@@ -1,42 +1,9 @@
-import { z } from "zod";
-import { callLLMJson, type JsonSchema } from "@/lib/llm";
 import type {
   AuthorizationResult,
   ClinicalExtraction,
   MedicalCodes,
   PolicyValidation,
 } from "@/types";
-
-const decisionPayloadSchema = z.object({
-  justification: z.string().min(1),
-  missingDocuments: z.array(z.string()),
-  recommendations: z.string().nullable(),
-});
-
-const decisionPayloadJsonSchema: JsonSchema = {
-  type: "object",
-  additionalProperties: false,
-  required: ["justification", "missingDocuments", "recommendations"],
-  properties: {
-    justification: { type: "string" },
-    missingDocuments: {
-      type: "array",
-      items: { type: "string" },
-    },
-    recommendations: { type: ["string", "null"] },
-  },
-};
-
-const DECISION_SYSTEM_PROMPT = `
-Eres un agente médico-administrativo especializado en pre-autorización quirúrgica.
-Redacta una explicación profesional, empática y comprensible para el paciente y el médico.
-
-Reglas:
-- No cambies la decisión indicada por el sistema.
-- Si la decisión es "Revisión", missingDocuments debe incluir al menos un documento, validación o acción administrativa necesaria.
-- Si no faltan documentos, devuelve missingDocuments como [].
-- No inventes coberturas, fechas ni condiciones de póliza.
-`.trim();
 
 function computeDecision(
   codes: MedicalCodes,
@@ -64,7 +31,7 @@ function ensureReviewDocuments(
   }
 
   if (codes.confidence === "baja") {
-    return ["Validación manual de codificación médica"];
+    return ["Validacion manual de codificacion medica"];
   }
 
   const documentWarning = policyValidation.warnings.find((warning) =>
@@ -75,10 +42,65 @@ function ensureReviewDocuments(
   }
 
   if (policyValidation.warnings.length > 0) {
-    return ["Revisión administrativa del tope quirúrgico y posible copago"];
+    return ["Revision administrativa del tope quirurgico y posible copago"];
   }
 
-  return ["Revisión administrativa del caso"];
+  return ["Revision administrativa del caso"];
+}
+
+function buildMissingDocuments(
+  decision: AuthorizationResult["decision"],
+  policyValidation: PolicyValidation,
+  codes: MedicalCodes,
+): string[] {
+  if (decision !== "Revisión") {
+    return [];
+  }
+
+  const documentWarnings = policyValidation.warnings
+    .filter((warning) => warning.toLowerCase().includes("documento faltante"))
+    .map((warning) => warning.replace(/^Documento faltante:\s*/i, ""));
+
+  return ensureReviewDocuments(
+    decision,
+    documentWarnings,
+    policyValidation,
+    codes,
+  );
+}
+
+function buildJustification({
+  clinical,
+  codes,
+  decision,
+  missingDocuments,
+  policyValidation,
+}: {
+  clinical: ClinicalExtraction;
+  codes: MedicalCodes;
+  decision: AuthorizationResult["decision"];
+  missingDocuments: string[];
+  policyValidation: PolicyValidation;
+}): string {
+  const clinicalSummary = `Diagnostico ${clinical.primaryDiagnosis}; procedimiento ${clinical.requestedProcedure}.`;
+  const codingSummary = `Codigos sugeridos: CIE-10 ${codes.cie10Code}, CPT ${codes.cptCode}; especialidad ${codes.specialtyCategory}.`;
+
+  if (decision === "Aprobado") {
+    return `${clinicalSummary} ${codingSummary} La poliza esta vigente, cubre la especialidad solicitada y no presenta bloqueos administrativos para la preautorizacion.`;
+  }
+
+  if (decision === "Revisión") {
+    const pending =
+      missingDocuments.length > 0
+        ? ` Pendiente: ${missingDocuments.join("; ")}.`
+        : "";
+    const warnings = policyValidation.warnings.join(" ");
+
+    return `${clinicalSummary} ${codingSummary} El caso requiere revision administrativa antes de emitir aprobacion definitiva. ${warnings}${pending}`.trim();
+  }
+
+  const reasons = policyValidation.failureReasons.join(" ");
+  return `${clinicalSummary} ${codingSummary} No se puede aprobar la solicitud porque existen bloqueos de poliza: ${reasons}`;
 }
 
 export async function generateDecision(
@@ -89,52 +111,24 @@ export async function generateDecision(
   startedAt: number = Date.now(),
 ): Promise<AuthorizationResult> {
   const decision = computeDecision(codes, policyValidation);
-  const contextSummary = `
-DECISIÓN DETERMINÍSTICA: ${decision}
-
-DATOS CLÍNICOS:
-- Diagnóstico principal: ${clinical.primaryDiagnosis}
-- Procedimiento solicitado: ${clinical.requestedProcedure}
-- Urgencia: ${clinical.urgency}
-- Justificación de urgencia: ${clinical.urgencyJustification ?? "N/A"}
-
-CODIFICACIÓN MÉDICA:
-- CIE-10: ${codes.cie10Code} - ${codes.cie10Description}
-- CPT: ${codes.cptCode}
-- CUPS: ${codes.cupsCode}
-- Procedimiento normalizado: ${codes.procedureDescription}
-- Especialidad: ${codes.specialtyCategory}
-- Confianza: ${codes.confidence}
-
-VALIDACIÓN DE PÓLIZA:
-- Póliza activa: ${policyValidation.isPolicyActive}
-- Carencia cumplida: ${policyValidation.waitingPeriodMet}
-- Procedimiento cubierto: ${policyValidation.isCovered}
-- Excluido: ${policyValidation.isExcluded}
-- Dentro del tope: ${policyValidation.withinCoverageLimit}
-- Razones de rechazo: ${policyValidation.failureReasons.join("; ") || "Ninguna"}
-- Advertencias: ${policyValidation.warnings.join("; ") || "Ninguna"}
-  `.trim();
-
-  const payload = await callLLMJson({
-    systemPrompt: DECISION_SYSTEM_PROMPT,
-    userMessage: contextSummary,
-    schemaName: "authorization_decision_payload",
-    jsonSchema: decisionPayloadJsonSchema,
-    zodSchema: decisionPayloadSchema,
-  });
+  const missingDocuments = buildMissingDocuments(
+    decision,
+    policyValidation,
+    codes,
+  );
 
   return {
     decision,
     cie10Code: codes.cie10Code,
     cptCode: codes.cptCode,
-    justification: payload.justification,
-    missingDocuments: ensureReviewDocuments(
-      decision,
-      payload.missingDocuments,
-      policyValidation,
+    justification: buildJustification({
+      clinical,
       codes,
-    ),
+      decision,
+      missingDocuments,
+      policyValidation,
+    }),
+    missingDocuments,
     isUrgent,
     processingTimeMs: Date.now() - startedAt,
   };

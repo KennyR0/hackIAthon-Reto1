@@ -110,7 +110,8 @@ export async function POST(request: Request) {
     let report;
     try {
       report = await parseMedicalReportPdf(reportText);
-    } catch {
+    } catch (error) {
+      console.error("Error extrayendo informacion del informe:", error);
       return NextResponse.json(
         {
           error:
@@ -123,7 +124,8 @@ export async function POST(request: Request) {
     let policy;
     try {
       policy = await parseInsurancePolicyPdf(policyText, report.policyId);
-    } catch {
+    } catch (error) {
+      console.error("Error extrayendo informacion de la poliza:", error);
       return NextResponse.json(
         {
           error:

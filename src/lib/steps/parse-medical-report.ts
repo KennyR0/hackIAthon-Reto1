@@ -36,42 +36,19 @@ const medicalReportJsonSchema: JsonSchema = {
 };
 
 const MEDICAL_REPORT_SYSTEM_PROMPT = `
-Eres un experto en documentación médica hospitalaria del sistema de salud ecuatoriano.
-Tu tarea es extraer datos estructurados de informes médicos emitidos por hospitales,
-clínicas privadas o centros de salud del IESS.
+Extrae datos de un informe medico ecuatoriano para preautorizacion quirurgica.
+Devuelve solo JSON valido con el schema solicitado.
 
-FORMATOS RECONOCIDOS EN ECUADOR:
-- Formulario 053 del MSP (Referencia y Contrarreferencia)
-- Formulario 033 del MSP (Historia Clínica Única)
-- Formulario 008 del IESS (Solicitud de Atención Especializada)
-- Epicrisis hospitalaria (formato libre de clínicas privadas)
-- Certificado médico con membrete institucional
-- Informe preoperatorio de especialista
+Campos:
+- patientId: cedula de 10 digitos o historia clinica. Si no existe, "SIN-ID".
+- patientName: nombre completo del paciente; normaliza si el texto esta en orden APELLIDOS NOMBRES.
+- reportDate: fecha de emision en YYYY-MM-DD. Si no hay fecha clara, usa la fecha actual recibida.
+- diagnosis: diagnostico principal y secundarios relevantes.
+- procedure: procedimiento quirurgico solicitado.
+- urgency: "Urgente" solo si hay emergencia, riesgo vital, perforacion, sepsis, trauma, shock, peritonitis, hemorragia, obstruccion o cirugia inmediata; si no, "Programada".
+- policyId: numero de poliza, afiliacion o carnet si aparece; si no, "".
 
-CAMPOS A EXTRAER:
-- patientId: número de cédula ecuatoriana (10 dígitos) o número de historia clínica.
-  Si encuentras ambos, preferir la cédula.
-- patientName: nombre completo del paciente tal como figura en el documento.
-- reportDate: fecha del informe en formato ISO 8601 (YYYY-MM-DD). Si hay varias fechas,
-  usar la de emisión/firma.
-- diagnosis: diagnóstico principal completo, tal como lo redactó el médico. Incluir
-  diagnósticos secundarios relevantes separados por punto y coma.
-- procedure: nombre completo del procedimiento quirúrgico o intervención solicitada.
-  Usar la denominación técnica que usa el médico.
-- urgency: clasificar como "Urgente" si el documento contiene cualquiera de estas
-  palabras o conceptos: urgente, emergencia, riesgo vital, hemorragia, perforación,
-  obstrucción, sepsis, peritonitis, trauma, shock, intervención inmediata, cirugía de
-  emergencia, no puede esperar, riesgo de muerte.
-  En cualquier otro caso, clasificar como "Programada".
-- policyId: número de póliza, afiliación o carnet del seguro si figura en el documento.
-  Si no figura, retornar cadena vacía "".
-
-REGLAS ESTRICTAS:
-- No inventes datos. Si un campo no está en el texto, usa "" o null según corresponda.
-- Para patientId, si no hay cédula ni historia clínica clara, devuelve "SIN-ID".
-- Para reportDate, si no hay fecha clara, devuelve la fecha actual en ISO 8601.
-- Los nombres de pacientes en Ecuador suelen ser: APELLIDO1 APELLIDO2 NOMBRE1 NOMBRE2.
-  Normaliza a "Nombre1 Nombre2 Apellido1 Apellido2" si puedes identificar la estructura.
+No inventes datos fuera del texto.
 `.trim();
 
 /**
@@ -88,19 +65,3 @@ export async function parseMedicalReportPdf(
     zodSchema: medicalReportSchema,
   });
 }
-
-/*
-CASO 1 - Aprobado (Programada)
-Input texto informe: "Paciente: Maria Alvarez, CC: 0987654321...
-  Diagnostico: Apendicitis cronica..."
-Output esperado: { patientId: "0987654321", urgency: "Programada", ... }
-
-CASO 2 - Urgente (salta carencia)
-Input texto informe: "Paciente presenta apendicitis aguda perforada con peritonitis
-  generalizada. Requiere laparotomia de emergencia inmediata..."
-Output esperado: { urgency: "Urgente", ... }
-
-CASO 3 - Rechazado (fuera de cobertura)
-Input texto poliza IESS: "Afiliado: Luis Paredes, No. Afiliacion: 1234567890-1..."
-  (poliza con Plan Basico sin Ortopedia)
-*/

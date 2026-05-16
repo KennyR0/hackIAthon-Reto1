@@ -12,6 +12,29 @@ function daysBetween(start: Date, end: Date): number {
   return Math.floor((end.getTime() - start.getTime()) / 86_400_000);
 }
 
+function coverageMatchesSpecialty(coverage: string, specialty: string): boolean {
+  const normalizedCoverage = normalizeText(coverage);
+
+  if (
+    normalizedCoverage.includes(specialty) ||
+    specialty.includes(normalizedCoverage)
+  ) {
+    return true;
+  }
+
+  const isSpineSpecialty =
+    specialty.includes("ortopedia") ||
+    specialty.includes("traumatologia") ||
+    specialty.includes("neurocirugia");
+  const isSpineCoverage =
+    normalizedCoverage.includes("columna") ||
+    normalizedCoverage.includes("neurocirugia") ||
+    normalizedCoverage.includes("ortopedia") ||
+    normalizedCoverage.includes("traumatologia");
+
+  return isSpineSpecialty && isSpineCoverage;
+}
+
 export function validatePolicy(
   policy: InsurancePolicy,
   specialty: string,
@@ -41,13 +64,9 @@ export function validatePolicy(
   }
 
   const normalizedSpecialty = normalizeText(specialty);
-  const isCovered = policy.coverages.some((coverage) => {
-    const normalizedCoverage = normalizeText(coverage);
-    return (
-      normalizedCoverage.includes(normalizedSpecialty) ||
-      normalizedSpecialty.includes(normalizedCoverage)
-    );
-  });
+  const isCovered = policy.coverages.some((coverage) =>
+    coverageMatchesSpecialty(coverage, normalizedSpecialty),
+  );
   if (!isCovered) {
     failureReasons.push(
       `La especialidad "${specialty}" no está incluida en las coberturas del plan ${policy.plan}.`,

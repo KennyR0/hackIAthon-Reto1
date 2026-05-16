@@ -3,12 +3,12 @@ import { callLLMJson, type JsonSchema } from "@/lib/llm";
 import type { MedicalCodes } from "@/types";
 
 const medicalCodesSchema = z.object({
-  cie10Code: z.string().min(1),
-  cie10Description: z.string().min(1),
-  cptCode: z.string().min(1),
-  cupsCode: z.string().min(1),
-  procedureDescription: z.string().min(1),
-  specialtyCategory: z.string().min(1),
+  cie10Code: z.string(),
+  cie10Description: z.string(),
+  cptCode: z.string(),
+  cupsCode: z.string(),
+  procedureDescription: z.string(),
+  specialtyCategory: z.string(),
   confidence: z.enum(["alta", "media", "baja"]),
 });
 
@@ -36,25 +36,35 @@ const medicalCodesJsonSchema: JsonSchema = {
 };
 
 const NORMALIZATION_SYSTEM_PROMPT = `
-Eres un experto en codificación médica para pre-autorizaciones quirúrgicas.
-Mapea el diagnóstico y procedimiento a códigos CIE-10, CPT y CUPS plausibles.
+Eres un experto en codificacion medica para preautorizaciones quirurgicas.
+Mapea diagnostico y procedimiento a codigos CIE-10, CPT y CUPS plausibles.
 
 Reglas:
-- Devuelve la especialidad médica como categoría de cobertura, por ejemplo "Cirugía General", "Ortopedia", "Ginecología".
-- Si hay ambigüedad clínica o administrativa, usa confidence "media" o "baja".
-- Si la confianza es baja, indica en procedureDescription que requiere verificación.
-- No inventes detalles clínicos que no estén en la entrada.
+- Devuelve la especialidad como categoria de cobertura, por ejemplo "Cirugía General", "Ortopedia", "Ginecología" o "Neurocirugía".
+- Si no sabes un codigo exacto, usa "N/D" en vez de cadena vacia.
+- Si hay ambiguedad clinica o administrativa, usa confidence "media" o "baja".
+- No inventes detalles clinicos que no esten en la entrada.
 `.trim();
 
 export async function normalizeMedicalCodes(
   diagnosis: string,
   procedure: string,
 ): Promise<MedicalCodes> {
-  return callLLMJson({
+  const codes = await callLLMJson({
     systemPrompt: NORMALIZATION_SYSTEM_PROMPT,
-    userMessage: `Diagnóstico: ${diagnosis}\nProcedimiento: ${procedure}`,
+    userMessage: `Diagnostico: ${diagnosis}\nProcedimiento: ${procedure}`,
     schemaName: "medical_codes",
     jsonSchema: medicalCodesJsonSchema,
     zodSchema: medicalCodesSchema,
   });
+
+  return {
+    ...codes,
+    cie10Code: codes.cie10Code.trim() || "N/D",
+    cie10Description: codes.cie10Description.trim() || diagnosis,
+    cptCode: codes.cptCode.trim() || "N/D",
+    cupsCode: codes.cupsCode.trim() || "N/D",
+    procedureDescription: codes.procedureDescription.trim() || procedure,
+    specialtyCategory: codes.specialtyCategory.trim() || "Revision medica",
+  };
 }
